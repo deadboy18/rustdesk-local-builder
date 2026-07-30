@@ -181,6 +181,12 @@ class Build:
         self.run(["cargo", "install", "flutter_rust_bridge_codegen",
                   "--version", "1.80.1", "--features", "uuid", "--locked"],
                  check=False)
+        # ffigen (invoked by the codegen) needs .dart_tool/package_config.json,
+        # which only exists after `flutter pub get`. Without it the codegen
+        # emits dummy code with an unresolvable Dart_Handle type and the build
+        # fails with E0412.
+        flutter_dir = os.path.join(self.src_dir, "flutter")
+        self.run(["flutter", "pub", "get"], cwd=flutter_dir, check=False)
         codegen = shutil.which("flutter_rust_bridge_codegen", path=self._effective_path())
         if not codegen and not self.dry_run:
             self.log("  ! flutter_rust_bridge_codegen not found after cargo install; "
@@ -334,6 +340,7 @@ class Build:
     def build_macos(self):
         self.log("\n=== Build macOS ===")
         self.customize_for("macos")
+        self._patch_macos_podfile()
         self.run([self._py(), "build.py", "--flutter", "--hwcodec"],
                  cwd=self.src_dir, check=False)
         env = self._env()
@@ -341,7 +348,126 @@ class Build:
                                "Build", "Products", "Release")
         if os.path.isdir(app_dir):
             customize.write_custom_txt(app_dir, env, log=self.log)
+        self._create_macos_dmg()
         self._collect(self.src_dir, (".dmg",), "macos")
+
+    def _patch_macos_podfile(self):
+        """Disable explicit modules and patch sqflite's FMDB import.
+
+        Xcode 26 uses explicit modules / clang dependency scanning, which
+        fails when the sqflite module imports <fmdb/FMDB.h> — the scanner
+        can't resolve the cross-framework import even though FMDB.framework
+        is built. We do two things:
+        1. Disable CLANG/SWIFT_ENABLE_EXPLICIT_MODULES in Podfile + Runner.xcodeproj
+        2. Patch SqfliteImport.h in the pub cache to use `@import FMDB;`
+           (module import) instead of `#import <fmdb/FMDB.h>` (header import)
+        """
+        if self.dry_run:
+            return
+        # -- 1. Patch Podfile --
+        podfile = os.path.join(self.src_dir, "flutter", "macos", "Podfile")
+        if not os.path.isfile(podfile):
+            return
+        with open(podfile, "r") as f:
+            content = f.read()
+        if "CLANG_ENABLE_EXPLICIT_MODULES" not in content:
+            injection = (
+                "    target.build_configurations.each do |config|\n"
+                "      config.build_settings['CLANG_ENABLE_EXPLICIT_MODULES'] = 'NO'\n"
+                "      config.build_settings['SWIFT_ENABLE_EXPLICIT_MODULES'] = 'NO'\n"
+                "    end\n"
+            )
+            marker = "    flutter_additional_macos_build_settings(target)\n"
+            if marker in content:
+                content = content.replace(marker, marker + injection)
+                with open(podfile, "w") as f:
+                    f.write(content)
+                self.log("  · patched Podfile: explicit modules disabled")
+        # -- 2. Patch Runner.xcodeproj --
+        pbxproj = os.path.join(self.src_dir, "flutter", "macos",
+                               "Runner.xcodeproj", "project.pbxproj")
+        if os.path.isfile(pbxproj):
+            with open(pbxproj, "r") as f:
+                pbx = f.read()
+            changed = False
+            if "CLANG_ENABLE_EXPLICIT_MODULES" not in pbx:
+                pbx = pbx.replace(
+                    "CLANG_ENABLE_MODULES = YES;",
+                    "CLANG_ENABLE_MODULES = YES;\n\t\t\t\tCLANG_ENABLE_EXPLICIT_MODULES = NO;")
+                changed = True
+            if "SWIFT_ENABLE_EXPLICIT_MODULES" not in pbx:
+                pbx = pbx.replace(
+                    "CLANG_ENABLE_EXPLICIT_MODULES = NO;",
+                    "CLANG_ENABLE_EXPLICIT_MODULES = NO;\n\t\t\t\tSWIFT_ENABLE_EXPLICIT_MODULES = NO;")
+                changed = True
+            if changed:
+                with open(pbxproj, "w") as f:
+                    f.write(pbx)
+                self.log("  · patched Runner.xcodeproj: explicit modules disabled")
+        # -- 3. Patch SqfliteImport.h in pub cache --
+        self._patch_sqflite_import()
+
+    def _patch_sqflite_import(self):
+        """Patch SqfliteImport.h to use `@import FMDB;` instead of
+        `#import <fmdb/FMDB.h>`.
+
+        The angle-bracket header import fails during module building on
+        Xcode 26 because the sqflite modulemap doesn't declare a dependency
+        on the FMDB module. Using `@import FMDB;` (Clang module import)
+        resolves correctly because FMDB.framework has a valid modulemap.
+        """
+        import glob
+        pub_cache = os.path.expanduser("~/.pub-cache")
+        candidates = glob.glob(os.path.join(
+            pub_cache, "hosted", "pub.dev", "sqflite-*",
+            "macos", "Classes", "SqfliteImport.h"))
+        for path in candidates:
+            with open(path, "r") as f:
+                content = f.read()
+            if "#import <fmdb/FMDB.h>" in content:
+                content = content.replace(
+                    "#import <fmdb/FMDB.h>", "@import FMDB;")
+                with open(path, "w") as f:
+                    f.write(content)
+                self.log(f"  · patched {path}: @import FMDB;")
+
+    def _create_macos_dmg(self):
+        """Create a .dmg from the built RustDesk.app using create-dmg.
+
+        build.py has the create-dmg step commented out, so the orchestrator
+        handles DMG packaging after the Flutter build completes.
+        """
+        if self.dry_run:
+            self.log("  (would create .dmg)")
+            return
+        app = os.path.join(self.src_dir, "flutter", "build", "macos",
+                           "Build", "Products", "Release", "RustDesk.app")
+        if not os.path.isdir(app):
+            self.log("  ! RustDesk.app not found — skipping DMG creation")
+            return
+        create_dmg = shutil.which("create-dmg", path=self._effective_path())
+        if not create_dmg:
+            self.log("  ! create-dmg not found — skipping DMG creation")
+            return
+        version = self.config.get("version", "")
+        dmg_name = f"rustdesk-{version}.dmg" if version else "rustdesk.dmg"
+        dmg_path = os.path.join(self.src_dir, dmg_name)
+        flutter_dir = os.path.join(self.src_dir, "flutter")
+        tmp_dmg = os.path.join(flutter_dir, "rustdesk.dmg")
+        self.run([
+            create_dmg,
+            "--volname", "RustDesk Installer",
+            "--window-pos", "200", "120",
+            "--window-size", "800", "400",
+            "--icon-size", "100",
+            "--app-drop-link", "600", "185",
+            "--icon", "RustDesk.app", "200", "190",
+            "--hide-extension", "RustDesk.app",
+            tmp_dmg, app,
+        ], cwd=flutter_dir, check=False)
+        if os.path.isfile(tmp_dmg):
+            shutil.move(tmp_dmg, dmg_path)
+            self.log(f"  ✓ created {dmg_name}")
 
     # ---- artifact collection ---------------------------------------------
     def _collect(self, root, exts, platform):
