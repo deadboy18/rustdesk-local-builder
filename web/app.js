@@ -250,7 +250,6 @@ function fillConfig(cfg) {
     if (el.type === "checkbox") el.checked = truthy(cfg[k]);
     else el.value = cfg[k] ?? "";
   });
-  syncColorPicker();
   restoreBrandingPreview(cfg);
   refreshPreview();
 }
@@ -283,7 +282,6 @@ async function refreshPreview() {
     `slogan : ${e.CUSTOM_SLOGAN || "(default: Powered by " + e.CUSTOM_APPNAME + ")"}\n` +
     `icon   : ${e.CUSTOM_ICON_FILE ? e.CUSTOM_ICON_FILE.split("/").pop() : "(default)"}\n` +
     `logo   : ${e.CUSTOM_LOGO_FILE ? e.CUSTOM_LOGO_FILE.split("/").pop() : "(default)"}\n` +
-    `theme  : ${e.CUSTOM_THEME_COLOR || "(default blue)"}\n` +
     `flags  : delayFix=${e.CUSTOM_DELAY_FIX} hidecm=${e.CUSTOM_HIDE_CM} ` +
     `xOffline=${e.CUSTOM_X_OFFLINE}`;
 }
@@ -369,6 +367,41 @@ document.addEventListener("input", e => {
   if (e.target.closest("#tab-config") && e.target.dataset.key) refreshPreview();
 });
 
+/* ── config presence banner ───────────────────────────── */
+// When there's no real RustDesk.json, tell the user exactly where to put it
+// instead of only failing with a console traceback on the server side.
+function renderConfigBanner(st) {
+  const el = $("#config-banner");
+  if (!el || !st || st.source === "config") {
+    if (el) el.hidden = true;
+    return;
+  }
+  const isMissing = st.source === "missing";
+  el.hidden = false;
+  el.className = "config-banner " + (isMissing ? "is-error" : "is-warn");
+  const where = esc(st.expected || st.path || "configs/RustDesk.json");
+  const lead = isMissing
+    ? "No RustDesk config found — the build has nothing to customize."
+    : "Using the bundled example config (RustDesk.example.json).";
+  el.innerHTML =
+    `<div class="cb-title">${isMissing ? "⚠ Config missing" : "ℹ Using example config"}</div>` +
+    `<div class="cb-body">${esc(lead)} To build with your own server, key and ` +
+    `password, put your config file here:</div>` +
+    `<code class="cb-path">${where}</code>` +
+    `<div class="cb-body">Generate one at ` +
+    `<a href="https://rdgen.crayoneater.org/" target="_blank" rel="noopener">rdgen.crayoneater.org</a> ` +
+    `(download as <strong>RustDesk.json</strong>), or fill in the ` +
+    `<a href="#" id="cb-goto-config">Config tab</a> and click Save.</div>`;
+  const goto = $("#cb-goto-config");
+  if (goto) goto.addEventListener("click", ev => {
+    ev.preventDefault();
+    $$(".tab").forEach(x => x.classList.remove("is-active"));
+    $$(".panel").forEach(x => x.classList.remove("is-active"));
+    $('.tab[data-tab="config"]').classList.add("is-active");
+    $("#tab-config").classList.add("is-active");
+  });
+}
+
 /* ── build console ────────────────────────────────────── */
 const con = $("#console");
 function conLine(text) {
@@ -418,6 +451,18 @@ async function onBuildEnd() {
   const r = st.result || {};
   setStatus(r.ok ? "done" : (r.cancelled ? "idle" : "failed"));
   renderArtifacts(r.artifacts || []);
+  // Remember where the output landed so "Open folder" goes straight there.
+  // An artifact may be the packed .exe (open its parent) or the Release
+  // folder itself (open it directly).
+  const arts = r.artifacts || [];
+  if (arts.length) {
+    let p = arts[0];
+    if (/\.(exe|msi|apk|zip|dmg|deb|rpm|AppImage|flatpak)$/i.test(p)) {
+      const sep = p.lastIndexOf("\\") >= 0 ? "\\" : "/";
+      p = p.slice(0, p.lastIndexOf(sep));
+    }
+    state.lastOutputDir = p;
+  }
   updateTray();
 }
 
@@ -425,6 +470,81 @@ function renderArtifacts(list) {
   $("#artifacts").innerHTML = list.map(a =>
     `<div class="artifact">${esc(a)}</div>`).join("");
 }
+
+/* ── copy log / copy errors / open folder ─────────────── */
+// Robust clipboard copy: the async Clipboard API needs a secure context, and
+// http://127.0.0.1 is treated as secure by most browsers — but fall back to a
+// hidden textarea + execCommand so it also works if that ever fails.
+async function copyText(text, btn) {
+  const done = ok => {
+    if (!btn) return;
+    const old = btn.textContent;
+    btn.textContent = ok ? "Copied ✓" : "Copy failed";
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  };
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return done(true);
+    }
+    throw new Error("no async clipboard");
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return done(ok);
+    } catch {
+      return done(false);
+    }
+  }
+}
+
+// The DOM is the log. Pull the full text, or just the error lines (the same
+// lines conLine() marked .con-err, so "Copy errors" matches what's shown red).
+function fullLogText() {
+  return Array.from(con.childNodes)
+    .map(n => n.textContent).join("").replace(/\n+$/, "\n");
+}
+function errorLogText() {
+  const errs = Array.from(con.querySelectorAll("span.con-err"))
+    .map(n => n.textContent.replace(/\n$/, ""));
+  return errs.length ? errs.join("\n") + "\n" : "";
+}
+
+$("#btn-copy-log").addEventListener("click", e => {
+  const t = fullLogText().trim();
+  if (!t) { return copyText("", e.currentTarget); }
+  copyText(t, e.currentTarget);
+});
+$("#btn-copy-errors").addEventListener("click", e => {
+  const t = errorLogText();
+  if (!t) {
+    const btn = e.currentTarget, old = btn.textContent;
+    btn.textContent = "No errors ✓";
+    setTimeout(() => { btn.textContent = old; }, 1500);
+    return;
+  }
+  copyText(t, e.currentTarget);
+});
+$("#btn-open-folder").addEventListener("click", async e => {
+  const btn = e.currentTarget, old = btn.textContent;
+  // Prefer the exact output dir the last build reported, if we have it;
+  // otherwise the server opens the newest output/ folder.
+  const opts = { method: "POST", headers: { "Content-Type": "application/json" } };
+  if (state.lastOutputDir) opts.body = JSON.stringify({ path: state.lastOutputDir });
+  else opts.body = JSON.stringify({});
+  const r = await api("/api/open-folder", opts);
+  if (r && r.error) {
+    btn.textContent = "Can't open";
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  }
+});
 
 $("#btn-build").addEventListener("click", () => startBuild(false));
 $("#btn-plan").addEventListener("click", () => startBuild(true));
@@ -500,6 +620,7 @@ async function boot() {
     loadMatrix(),
     api("/api/prereqs").then(renderPrereqs),
     api("/api/config").then(fillConfig),
+    api("/api/config/status").then(renderConfigBanner),
   ]);
 }
 $("#recheck").addEventListener("click", async () => {
@@ -510,65 +631,3 @@ $("#recheck").addEventListener("click", async () => {
 });
 
 boot();
-
-/* ── theme color picker ───────────────────────────────── */
-const cp = $("#themeColorPicker");
-const hue = $("#themeColorHue");
-const hex = $("#themeColorHex");
-const swatch = $("#themeColorSwatch");
-
-function hslToHex(h, s, l) {
-  s /= 100; l /= 100;
-  const k = n => (n + h / 30) % 12;
-  const a = s * Math.min(l, 1 - l);
-  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-  const toHex = x => Math.round(255 * x).toString(16).padStart(2, "0");
-  return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`.toUpperCase();
-}
-
-function hexToHue(hexVal) {
-  hexVal = hexVal.replace("#", "");
-  if (hexVal.length !== 6) return 212;
-  const r = parseInt(hexVal.slice(0, 2), 16) / 255;
-  const g = parseInt(hexVal.slice(2, 4), 16) / 255;
-  const b = parseInt(hexVal.slice(4, 6), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  if (max === min) return 0;
-  let h;
-  if (max === r) h = ((g - b) / (max - min) + (g < b ? 6 : 0)) * 60;
-  else if (max === g) h = ((b - r) / (max - min) + 2) * 60;
-  else h = ((r - g) / (max - min) + 4) * 60;
-  return Math.round(h);
-}
-
-function syncColorPicker() {
-  const v = hex.value || "#0071FF";
-  cp.value = v;
-  hue.value = hexToHue(v);
-  swatch.style.background = v;
-}
-
-cp.addEventListener("input", () => {
-  hex.value = cp.value.toUpperCase();
-  hue.value = hexToHue(cp.value);
-  swatch.style.background = cp.value;
-  refreshPreview();
-});
-
-hue.addEventListener("input", () => {
-  const v = hslToHex(+hue.value, 80, 50);
-  hex.value = v;
-  cp.value = v;
-  swatch.style.background = v;
-  refreshPreview();
-});
-
-hex.addEventListener("input", () => {
-  const v = hex.value.trim();
-  if (/^#[0-9A-Fa-f]{6}$/.test(v)) {
-    cp.value = v;
-    hue.value = hexToHue(v);
-    swatch.style.background = v;
-    refreshPreview();
-  }
-});

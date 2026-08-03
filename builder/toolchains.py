@@ -88,13 +88,24 @@ TOOLS = {
     "llvm": {
         "label": "LLVM / clang 15.0.6",
         "kind": "archive",
+        # Windows is special: the official LLVM-15.0.6-win64.exe is an NSIS
+        # installer that (a) requires admin and (b) when LLVM is already
+        # installed, tries to silently *uninstall* the previous copy first —
+        # that silent uninstall fails and pops a blocking "Uninstall failed"
+        # dialog mid-build. bindgen/ffigen only need libclang.dll, not the
+        # full clang toolchain, so on Windows we fetch just libclang via pip
+        # into .toolchains/llvm (no admin, no NSIS, no uninstall, ~23 MB).
+        # Linux/macOS keep the portable LLVM 15.0.6 tarball (they ship one;
+        # Windows 15.0.6 does not).
         "urls": {
-            ("Windows", "x86_64"): (f"{LLVM_REL}/LLVM-15.0.6-win64.exe", "nsis"),
+            ("Windows", "x86_64"): ("libclang==15.0.6.1", "pip"),
             ("Linux", "x86_64"):   (f"{LLVM_REL}/clang+llvm-15.0.6-x86_64-linux-gnu-ubuntu-18.04.tar.xz", "tar"),
             ("Linux", "arm64"):    (f"{LLVM_REL}/clang+llvm-15.0.6-aarch64-linux-gnu.tar.xz", "tar"),
             ("macOS", "x86_64"):   (f"{LLVM_REL}/clang+llvm-15.0.6-x86_64-apple-darwin21.0.tar.xz", "tar"),
             ("macOS", "arm64"):    (f"{LLVM_REL}/clang+llvm-15.0.6-arm64-apple-darwin21.0.tar.xz", "tar"),
         },
+        # bin/clang.exe on Linux/macOS; on Windows the pip path lays down
+        # bin/libclang.dll and _locate/_env_for/check_llvm accept either.
         "marker": os.path.join("bin", "clang" + EXE),
     },
     "android_ndk": {
@@ -533,6 +544,53 @@ def install_one(tid, root, log, cancelled=lambda: False):
     url, arch_kind = spec["urls"][(host_os, host_arch)]
     if cancelled():
         raise RuntimeError("cancelled")
+
+    if arch_kind == "pip":
+        # Windows libclang via pip — no admin, no NSIS installer, no "Uninstall
+        # failed" dialog. `url` here is a pip requirement like "libclang==15.0.6.1".
+        # We install it into .toolchains/llvm with --target, then hoist the
+        # bundled libclang.dll up to bin/ so _locate / _env_for / check_llvm
+        # (which look under bin/ and lib/) find it with no further changes.
+        req = url
+        if os.path.isdir(home_target):
+            shutil.rmtree(home_target, ignore_errors=True)
+        os.makedirs(home_target, exist_ok=True)
+        # Prefer the current interpreter's pip so we don't depend on a `pip`
+        # binary being on PATH (py -m pip is the reliable Windows form).
+        import sys as _sys
+        pip_cmd = [_sys.executable, "-m", "pip", "install", "--no-input",
+                   "--target", home_target, req]
+        log(f"  installing {req} via pip (libclang only — no admin needed)")
+        log("  $ " + " ".join(pip_cmd))
+        rc = subprocess.call(pip_cmd)
+        if rc != 0:
+            raise RuntimeError(
+                f"pip install {req} failed (exit {rc}). Ensure Python's pip is "
+                "available; or install LLVM 15 manually and set LIBCLANG_PATH.")
+        if cancelled():
+            raise RuntimeError("cancelled")
+        # Locate the DLL the wheel dropped (clang/native/libclang.dll) and
+        # copy it into bin/ so the rest of the pipeline finds it uniformly.
+        bindir = os.path.join(home_target, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        found_dll = None
+        for dp, _dirs, files in os.walk(home_target):
+            for fn in files:
+                if fn.lower() == "libclang.dll":
+                    found_dll = os.path.join(dp, fn)
+                    break
+            if found_dll:
+                break
+        if not found_dll:
+            raise RuntimeError(
+                "pip installed libclang but libclang.dll was not found under "
+                f"{home_target} — the wheel layout may have changed.")
+        dst_dll = os.path.join(bindir, "libclang.dll")
+        if os.path.abspath(found_dll) != os.path.abspath(dst_dll):
+            shutil.copy2(found_dll, dst_dll)
+        env = _env_for(tid, home_target)
+        log(f"  ✓ libclang installed — LIBCLANG_PATH = {env['vars'].get('LIBCLANG_PATH')}")
+        return {"tool": tid, "home": home_target, "env": env}
 
     if arch_kind == "nsis":
         # The official LLVM Windows installer is requireAdministrator, so a plain

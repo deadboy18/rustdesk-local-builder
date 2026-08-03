@@ -643,58 +643,6 @@ class Build:
                  cwd=self.src_dir, check=True, env=env)
 
     # ---- per-platform builds ---------------------------------------------
-    def _build_windows_msi(self):
-        """Build an MSI installer from the Flutter Release output.
-
-        Mirrors the VenimK/tzdm workflow:
-          1. python res/msi/preprocess.py --app-name {app} --arp -d {release_dir}
-          2. nuget restore msi.sln
-          3. msbuild msi.sln -p:Configuration=Release -p:Platform=x64
-        The MSI is collected as an artifact alongside the portable exe.
-        """
-        if self.dry_run:
-            self.log("  (would build MSI)")
-            return
-        if self.host["os"] != "Windows":
-            self.log("  · skipping MSI (requires Windows + nuget + msbuild)")
-            return
-        app_name = self.config.get("appname", "RustDesk") or "RustDesk"
-        # MSI names can't have spaces — replace with underscores
-        msi_app = app_name.replace(" ", "_")
-        release = os.path.join(self.src_dir, "flutter", "build", "windows",
-                               "x64", "runner", "Release")
-        msi_dir = os.path.join(self.src_dir, "res", "msi")
-        if not os.path.isdir(msi_dir):
-            self.log("  ! res/msi not found — skipping MSI")
-            return
-
-        self.log("  · building MSI installer…")
-        # 1. Preprocess: inject app name into MSI templates
-        self.run([self._py(), "preprocess.py", "--app-name", msi_app,
-                  "--arp", "-d", os.path.relpath(release, msi_dir)],
-                 cwd=msi_dir, check=False)
-        # 2. Restore NuGet packages
-        nuget = shutil.which("nuget", path=self._effective_path()) or "nuget"
-        self.run([nuget, "restore", "msi.sln"], cwd=msi_dir, check=False)
-        # 3. Build the MSI
-        msbuild = shutil.which("msbuild", path=self._effective_path()) or "msbuild"
-        self.run([msbuild, "msi.sln",
-                  "-p:Configuration=Release", "-p:Platform=x64",
-                  "/p:TargetVersion=Windows10"],
-                 cwd=msi_dir, check=False)
-        # 4. Collect the MSI
-        msi_src = os.path.join(msi_dir, "Package", "bin", "x64", "Release",
-                              "en-us", "Package.msi")
-        basename = self._output_basename()
-        version = self.version
-        if os.path.isfile(msi_src):
-            msi_dest = os.path.join(self.out_dir, f"{basename}-{version}.msi")
-            shutil.copy2(msi_src, msi_dest)
-            self.artifacts.append(msi_dest)
-            self.log(f"  ✓ artifact: {msi_dest}")
-        else:
-            self.log("  ! MSI not found — MSI build may have failed")
-
     def build_windows(self):
         self.log("\n=== Build Windows x86_64 ===")
         # Always use the MSVC toolchain — the official CI pins
@@ -764,47 +712,124 @@ class Build:
                 else:
                     self.log("  ! failed to download custom Flutter engine")
 
-        win_targets = [t for t in self.target_ids if t.startswith("windows-")]
-        wants_exe = "windows-x86_64-exe" in win_targets
-        wants_msi = "windows-x86_64-msi" in win_targets
-        # Default: if neither is explicitly selected, build exe (back-compat)
-        if not wants_exe and not wants_msi:
-            wants_exe = True
-
-        # build.py always runs the Flutter build. --portable triggers the
-        # self-extracting exe packing via libs/portable/generate.py.
-        # Skip portable packing when only MSI is wanted.
-        build_args = [self._py(), "build.py", "--hwcodec", "--flutter", "--vram"]
-        if wants_exe:
-            build_args.append("--portable")
-        self.run(build_args, cwd=self.src_dir)
-
+        self.run([self._py(), "build.py", "--portable", "--hwcodec", "--flutter",
+                  "--vram", "--skip-portable-pack"], cwd=self.src_dir)
         release = os.path.join(self.src_dir, "flutter", "build", "windows",
                                "x64", "runner", "Release")
         # category B: base64 custom_.txt next to the binary
         if not self.dry_run:
             env = self._env()
             customize.write_custom_txt(release, env, log=self.log)
-
-        basename = self._output_basename()
-        version = self.version
-
-        # Build and collect MSI installer if requested
-        if wants_msi:
-            self._build_windows_msi()
-
-        # Collect the portable exe if requested
-        if wants_exe:
-            portable_exe = os.path.join(self.src_dir, f"rustdesk-{version}-install.exe")
-            if os.path.isfile(portable_exe):
-                dest = os.path.join(self.out_dir, f"{basename}-{version}-install.exe")
-                shutil.copy2(portable_exe, dest)
-                self.artifacts.append(dest)
-                self.log(f"  ✓ artifact: {dest}")
-            else:
-                self.log("  ! portable exe not found — portable pack may have failed")
-            # Also copy the Release directory as a fallback (loose files)
+        # A Flutter Windows build is a launcher .exe plus the engine
+        # (flutter_windows.dll), the Rust core (librustdesk.dll), and one DLL
+        # per plugin — it can't be a single loose .exe. To ship one movable
+        # file, we run RustDesk's own portable packer (libs/portable), exactly
+        # like the GitHub Actions build does: it compresses the whole Release
+        # folder into a single self-extracting rustdesk-portable-packer.exe
+        # that unpacks to a temp dir and launches at runtime.
+        packed = self._pack_windows_portable(release)
+        if packed:
+            self.artifacts.append(packed)
+            self.log(f"  ✓ artifact: {packed}")
+        else:
+            # Packer unavailable/failed — fall back to the whole folder so the
+            # build still yields something runnable (folder must move as a unit).
+            self.log("  ! portable packer unavailable — emitting the Release "
+                     "folder instead (move the whole folder, not just the .exe)")
             self._collect_dir(release, "windows", "Release")
+
+    def _pack_windows_portable(self, release):
+        """Pack the Windows Release folder into one self-extracting .exe.
+
+        Ports the official CI step (build-windows.yml → "Build self-extracting
+        EXE (portable)"): patch the manifest, install brotli, run RustDesk's
+        libs/portable/generate.py, and rename the resulting packer .exe to the
+        custom output name. Returns the output path, or None on failure.
+        """
+        os.makedirs(self.out_dir, exist_ok=True)
+        basename = self._output_basename()
+        out_name = f"{basename}-{self.version}-x86_64.exe"
+        out_path = os.path.join(self.out_dir, out_name)
+
+        if self.dry_run:
+            self.log(f"  (would pack {release} → {out_path} via libs/portable)")
+            return out_path
+        if not os.path.isdir(release):
+            self.log(f"  ! Release folder missing: {release}")
+            return None
+
+        portable = os.path.join(self.src_dir, "libs", "portable")
+        generate = os.path.join(portable, "generate.py")
+        if not os.path.isfile(generate):
+            self.log(f"  ! libs/portable/generate.py not found at {generate}")
+            return None
+
+        # The packer needs an .exe inside the folder to launch after extract.
+        # The Flutter build always produces rustdesk.exe; pack that (matches CI,
+        # which packs rustdesk.exe and only names the *packer* output custom).
+        inner_exe = os.path.join(release, "rustdesk.exe")
+        if not os.path.isfile(inner_exe):
+            # If a rename happened earlier, fall back to the custom-named exe.
+            alt = os.path.join(release, f"{basename}.exe")
+            if os.path.isfile(alt):
+                inner_exe = alt
+            else:
+                self.log(f"  ! no launch .exe found in {release}")
+                return None
+
+        self.log("\n=== Pack Windows portable (single .exe) ===")
+
+        # 1) CI removes the dpiAware line from res/manifest.xml before packing.
+        manifest = os.path.join(self.src_dir, "res", "manifest.xml")
+        if os.path.isfile(manifest):
+            try:
+                with open(manifest, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                kept = [ln for ln in lines if "dpiAware" not in ln]
+                if len(kept) != len(lines):
+                    with open(manifest, "w", encoding="utf-8") as f:
+                        f.writelines(kept)
+                    self.log("  · removed dpiAware from res/manifest.xml")
+            except OSError as e:
+                self.log(f"  ! could not edit manifest ({e}) — continuing")
+
+        # 2) brotli is generate.py's only dependency.
+        self.log("  · ensuring brotli (pip) for the packer")
+        self.run([self._py(), "-m", "pip", "install", "--no-input", "brotli"],
+                 check=False)
+
+        # 3) Run the packer. -f source folder, -o output dir (here: libs/portable),
+        #    -e the exe to launch after self-extraction.
+        rc = self.run([self._py(), "generate.py",
+                       "-f", release, "-o", ".", "-e", inner_exe],
+                      cwd=portable, check=False)
+        # libs/portable is a Cargo *workspace member*, so `cargo build` inside it
+        # emits into the workspace-ROOT target dir (rustdesk-src/target/release),
+        # NOT libs/portable/target/release. The official CI relies on exactly
+        # this: it `mv ./target/release/rustdesk-portable-packer.exe` from the
+        # checkout root. Look there first, then fall back to a couple of other
+        # spots just in case a future layout change puts it elsewhere.
+        packer_name = "rustdesk-portable-packer.exe"
+        candidates = [
+            os.path.join(self.src_dir, "target", "release", packer_name),
+            os.path.join(portable, "target", "release", packer_name),
+            os.path.join(self.workspace, "target", "release", packer_name),
+        ]
+        packer_exe = next((c for c in candidates if os.path.isfile(c)), None)
+        if rc != 0 or not packer_exe:
+            self.log(f"  ! portable packer did not produce {packer_name} "
+                     f"(exit {rc}). Looked in: "
+                     + "; ".join(candidates))
+            return None
+        self.log(f"  · packer exe: {packer_exe}")
+
+        shutil.copy2(packer_exe, out_path)
+        try:
+            size = os.path.getsize(out_path)
+            self.log(f"  · portable exe size: {size / (1024*1024):.1f} MB")
+        except OSError:
+            pass
+        return out_path
 
     def build_linux(self):
         self.log("\n=== Build Linux ===")
@@ -928,7 +953,7 @@ class Build:
                      cwd=self.src_dir, check=False)
             # For aarch64, patch the hardcoded x64 bundle path
             if arch_seg != "x64":
-                self.run(["sed", "-i", f"s/linux\/x64/linux\/{arch_seg}/g", spec],
+                self.run(["sed", "-i", f"s|linux/x64|linux/{arch_seg}|g", spec],
                          cwd=self.src_dir, check=False)
             # Build binary RPM only (-bb), matching CI
             self.run([rpm_tool, "-bb", spec],

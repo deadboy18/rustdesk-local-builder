@@ -213,6 +213,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(config_gen.load_config(CONFIG_PATH))
             except Exception as e:
                 return self._send_json({"error": str(e)}, 500)
+        if path == "/api/config/status":
+            # Tells the UI whether a real RustDesk.json exists, or we're running
+            # on the example fallback, plus exactly where to place the file.
+            return self._send_json(config_gen.config_status(CONFIG_PATH))
         if path == "/api/build/stream":
             return self._stream(SESSION)
         if path == "/api/build/status":
@@ -298,6 +302,45 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/build/cancel":
             return self._send_json({"ok": SESSION.cancel()})
+
+        if path == "/api/open-folder":
+            # Reveal a build-output folder in the OS file manager. Accepts an
+            # explicit {"path": ...} (must live under the workspace) or nothing,
+            # in which case it opens the newest output/ folder (or output/ root).
+            target = data.get("path", "") if isinstance(data, dict) else ""
+            out_root = os.path.join(WORKSPACE, "output")
+            if target:
+                # Only allow paths inside the workspace — no arbitrary browsing.
+                ap = os.path.abspath(target)
+                if os.path.commonpath([ap, os.path.abspath(WORKSPACE)]) != \
+                        os.path.abspath(WORKSPACE):
+                    return self._send_json(
+                        {"error": "path is outside the workspace"}, 400)
+                target = ap
+            else:
+                # newest version dir under output/, else output/ itself
+                target = out_root
+                try:
+                    subs = [os.path.join(out_root, d) for d in os.listdir(out_root)
+                            if os.path.isdir(os.path.join(out_root, d))]
+                    if subs:
+                        target = max(subs, key=os.path.getmtime)
+                except OSError:
+                    pass
+            if not os.path.isdir(target):
+                os.makedirs(target, exist_ok=True)
+            try:
+                if sys.platform == "win32":
+                    os.startfile(target)  # noqa: S606 (intended)
+                elif sys.platform == "darwin":
+                    import subprocess
+                    subprocess.Popen(["open", target])
+                else:
+                    import subprocess
+                    subprocess.Popen(["xdg-open", target])
+                return self._send_json({"ok": True, "path": target})
+            except Exception as e:
+                return self._send_json({"error": str(e), "path": target}, 500)
 
         if path == "/api/toolchains/install":
             ids = data.get("ids", [])

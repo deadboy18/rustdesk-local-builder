@@ -133,8 +133,56 @@ def check_clang():
     return _status(False, hint=_install_hint("clang"))
 
 
+def _dir_has_libclang(d):
+    """True if directory d contains a libclang shared library."""
+    if not d or not os.path.isdir(d):
+        return False
+    names = ("libclang.dll", "libclang.dylib", "libclang.so")
+    if any(os.path.isfile(os.path.join(d, n)) for n in names):
+        return True
+    # versioned sonames, e.g. libclang.so.15 / libclang.so.15.0.6
+    try:
+        return any(n.startswith("libclang.so.")
+                   for n in os.listdir(d)
+                   if os.path.isfile(os.path.join(d, n)))
+    except OSError:
+        return False
+
+
+def _find_toolchains_libclang():
+    """Look under .toolchains/llvm for a libclang library; return its dir."""
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    base = os.path.join(root, ".toolchains", "llvm")
+    if not os.path.isdir(base):
+        return None
+    # common spots first (bin/ from the pip path, lib/ from the tarballs),
+    # then a shallow walk as a fallback.
+    for sub in ("bin", "lib"):
+        d = os.path.join(base, sub)
+        if _dir_has_libclang(d):
+            return d
+    for dp, _dirs, _files in os.walk(base):
+        if _dir_has_libclang(dp):
+            return dp
+    return None
+
+
 def check_llvm():
-    # RustDesk's bindgen wants libclang; look for llvm-config or clang
+    # RustDesk's bindgen/ffigen only needs *libclang*, not a full clang
+    # toolchain. On Windows we install just libclang.dll (via pip) into
+    # .toolchains/llvm, so there is deliberately no clang.exe to find — detect
+    # the library itself, not only a clang binary.
+    #
+    # 1) explicit LIBCLANG_PATH wins (set by the auto-installer's env.json).
+    lc = os.environ.get("LIBCLANG_PATH", "")
+    if _dir_has_libclang(lc):
+        return _status(True, f"libclang ({PINNED['llvm']})", lc)
+    # 2) a libclang under our managed .toolchains/llvm tree.
+    tc = _find_toolchains_libclang()
+    if tc:
+        return _status(True, f"libclang ({PINNED['llvm']})", tc)
+    # 3) fall back to a real clang / llvm-config on PATH (Linux/macOS system
+    #    installs, or a full LLVM tarball whose bin/ is on PATH).
     p = _which("llvm-config") or _which("clang")
     if not p:
         return _status(False, hint=_install_hint("llvm"))
@@ -268,13 +316,6 @@ def check_sccache():
     return _status(True, ver, p, note="Optional: speeds up Rust/C++ rebuilds significantly.")
 
 
-def check_nuget():
-    p = _which("nuget")
-    if not p:
-        return _status(False, hint=_install_hint("nuget"))
-    return _status(True, _run_version(["nuget", "help"]) or "nuget", p)
-
-
 def check_imagemagick():
     """ImageMagick — needed for icon/logo resizing and ICO/ICNS generation."""
     for name in ("magick", "convert"):
@@ -316,7 +357,6 @@ CHECKS = {
     "llvm": check_llvm,
     "vcpkg": check_vcpkg,
     "msbuild": check_msbuild,
-    "nuget": check_nuget,
     "java": check_java,
     "android_ndk": check_android_ndk,
     "xcode": check_xcode,
@@ -338,7 +378,6 @@ LABELS = {
     "llvm": "LLVM / libclang",
     "vcpkg": "vcpkg (native deps: ffmpeg, hwcodec)",
     "msbuild": "MSBuild (Visual Studio)",
-    "nuget": "NuGet (MSI packaging dependency)",
     "java": "Java (JDK 17)",
     "android_ndk": "Android NDK",
     "xcode": "Xcode command-line tools",
@@ -441,11 +480,6 @@ def _install_hint(tool):
             "Windows": "Download from https://potrace.sourceforge.net/#downloading",
             "Linux": "sudo apt install potrace",
             "macOS": "brew install potrace",
-        },
-        "nuget": {
-            "Windows": "Download from https://www.nuget.org/downloads  and add to PATH, or: choco install nuget.commandline",
-            "Linux": "N/A — MSI is Windows-only.",
-            "macOS": "N/A — MSI is Windows-only.",
         },
     }
     return hints.get(tool, {}).get(os_name, "")

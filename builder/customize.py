@@ -255,43 +255,6 @@ def _apply_company(src, env, platform, log):
             "Purslane Ltd", comp, log)
 
 
-def _apply_theme_color(src, env, log):
-    """Patch the accent/primary colors in flutter/lib/common.dart.
-
-    RustDesk uses a blue accent (#0071FF) throughout the UI.  This replaces
-    the accent, accent50, accent80, button, and idColor constants with a
-    user-supplied hex color, re-skinning the entire app.
-    """
-    color = env.get("CUSTOM_THEME_COLOR", "") or ""
-    if not color:
-        return
-    # Normalise: strip leading #, uppercase, ensure 6 hex digits
-    hex_str = color.lstrip("#").upper()
-    if not re.match(r"^[0-9A-F]{6}$", hex_str):
-        log(f"  ! invalid theme color '{color}' — skipping")
-        return
-    log(f"  Theme color -> #{hex_str}")
-    common = "flutter/lib/common.dart"
-    path = os.path.join(src, common)
-    if not os.path.isfile(path):
-        log(f"  ! {common} not found — skipping theme color")
-        return
-    text = _read(path)
-    # Replace the full-opacity accent: 0xFF0071FF -> 0xFF{hex}
-    text = text.replace("0xFF0071FF", f"0xFF{hex_str}")
-    # accent50 uses 0x77 alpha: 0x770071FF -> 0x77{hex}
-    text = text.replace("0x770071FF", f"0x77{hex_str}")
-    # accent80 uses 0xAA alpha: 0xAA0071FF -> 0xAA{hex}
-    text = text.replace("0xAA0071FF", f"0xAA{hex_str}")
-    # button color: 0xFF2C8CFF -> 0xFF{hex}
-    text = text.replace("0xFF2C8CFF", f"0xFF{hex_str}")
-    text = text.replace("0xFF2c8cff", f"0xFF{hex_str}")
-    # idColor: 0xFF00B6F0 -> 0xFF{hex}
-    text = text.replace("0xFF00B6F0", f"0xFF{hex_str}")
-    _write(path, text)
-    log(f"    · patched accent colors in {common}")
-
-
 def _apply_urls(src, env, log):
     url = env["CUSTOM_URL_LINK"]
     dl = env["CUSTOM_DOWNLOAD_LINK"]
@@ -643,40 +606,6 @@ def _apply_logo(src, env, platform, log):
 # public entry point
 # ---------------------------------------------------------------------------
 
-def _apply_windows_build_fix(src, log):
-    """Fix build.py's hardcoded 'python3' calls on Windows.
-
-    RustDesk's build.py invokes the portable packer and inline-sciter
-    scripts via a literal 'python3' shell command. Windows installs
-    normally only expose 'python'/'py', not 'python3', so the portable
-    .exe packing step fails with a non-zero exit code. Replace each
-    call site with sys.executable (already imported in build.py).
-    """
-    path = os.path.join(src, "build.py")
-    if not os.path.isfile(path):
-        return
-    text = _read(path)
-    if "python3 " not in text and "'python3" not in text:
-        return
-    replacements = [
-        # f-string call sites: 'python3' -> '{sys.executable}' inside an
-        # existing f-string, so the braces are interpolated correctly.
-        ("f'python3 ./generate.py", "f'{sys.executable} ./generate.py"),
-        # plain-string call site: needs an f-prefix added too.
-        ("system2('python3 res/inline-sciter.py')",
-         "system2(f'{sys.executable} res/inline-sciter.py')"),
-    ]
-    new_text = text
-    changed = False
-    for old, new in replacements:
-        if old in new_text:
-            new_text = new_text.replace(old, new)
-            changed = True
-    if changed:
-        _write(path, new_text)
-        log("  · patched build.py: python3 -> sys.executable (Windows fix)")
-
-
 def apply(src_dir, platform, env, patches_dir, log=print):
     """
     Apply all customizations for `platform` in-place on `src_dir`.
@@ -690,14 +619,11 @@ def apply(src_dir, platform, env, patches_dir, log=print):
     _apply_server_key_api(src_dir, env, log)
     _apply_allow_custom(src_dir, patches_dir, log)
     git_apply(src_dir, os.path.join(patches_dir, "removeSetupServerTip.diff"), log)
-    if platform == "windows":
-        _apply_windows_build_fix(src_dir, log)
     _apply_appname(src_dir, env, platform, log)
     _apply_company(src_dir, env, platform, log)
     _apply_flags(src_dir, env, patches_dir, log)
     _apply_gpu_texture_fix(src_dir, log)
     _apply_urls(src_dir, env, log)
-    _apply_theme_color(src_dir, env, log)
     _apply_icon(src_dir, env, platform, log)
     _apply_logo(src_dir, env, platform, log)
     if platform == "android":

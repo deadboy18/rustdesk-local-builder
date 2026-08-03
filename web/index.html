@@ -111,13 +111,6 @@
             <label>Company<input data-key="compname"></label>
             <label>Slogan<input data-key="slogan" placeholder="blank = Powered by {appname}"></label>
             <label>Android app id<input data-key="androidappid" placeholder="blank = default"></label>
-            <label>Theme color</label>
-            <div class="color-picker">
-              <input type="color" id="themeColorPicker" value="#0071FF">
-              <input type="range" id="themeColorHue" min="0" max="360" value="212" class="hue-slider">
-              <input data-key="themeColor" id="themeColorHex" placeholder="#0071FF" spellcheck="false">
-              <span class="color-swatch" id="themeColorSwatch"></span>
-            </div>
           </fieldset>
 
           <fieldset>
@@ -192,12 +185,17 @@
         <p class="lede">Runs the same steps as the GitHub Actions workflow, on this machine.</p>
       </header>
 
+      <div class="config-banner" id="config-banner" hidden></div>
+
       <div class="build-bar">
         <label class="ver">RustDesk version
           <input id="version" value="1.4.9" size="10">
         </label>
         <span class="build-status" id="build-status">idle</span>
         <span class="build-timer" id="build-timer"></span>
+        <button class="btn ghost" id="btn-copy-log" title="Copy the entire build log to the clipboard">Copy log</button>
+        <button class="btn ghost" id="btn-copy-errors" title="Copy only the error lines to the clipboard">Copy errors</button>
+        <button class="btn ghost" id="btn-open-folder" title="Open the build output folder in your file manager">Open folder</button>
         <button class="btn danger" id="btn-cancel" disabled>Cancel</button>
       </div>
 

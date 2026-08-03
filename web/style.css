@@ -367,37 +367,6 @@ legend { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; colo
 .form-actions { display: flex; align-items: center; gap: 14px; }
 .save-note { font-size: 12.5px; color: var(--good); font-family: var(--mono); }
 
-/* ── color picker ─────────────────────────────────────── */
-.color-picker { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
-.color-picker input[type="color"] {
-  width: 38px; height: 38px; border: 1px solid var(--line); border-radius: var(--r-sm);
-  background: var(--bg); cursor: pointer; padding: 2px; flex-shrink: 0;
-}
-.color-picker input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-.color-picker input[type="color"]::-webkit-color-swatch { border: none; border-radius: 3px; }
-.hue-slider {
-  flex: 1; height: 8px; -webkit-appearance: none; appearance: none;
-  background: linear-gradient(to right,
-    hsl(0,80%,50%), hsl(60,80%,50%), hsl(120,80%,50%),
-    hsl(180,80%,50%), hsl(240,80%,50%), hsl(300,80%,50%), hsl(360,80%,50%));
-  border-radius: 4px; outline: none; cursor: pointer;
-}
-.hue-slider::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
-  background: #fff; border: 2px solid var(--steel); cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.3);
-}
-.hue-slider::-moz-range-thumb {
-  width: 18px; height: 18px; border-radius: 50%; background: #fff;
-  border: 2px solid var(--steel); cursor: pointer;
-}
-.color-picker input[type="text"] {
-  width: 90px; flex-shrink: 0; margin-top: 0;
-}
-.color-swatch {
-  width: 28px; height: 28px; border-radius: var(--r-sm); border: 1px solid var(--line);
-  flex-shrink: 0; background: #0071FF;
-}
-
 .upload-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
 @media (max-width: 600px) { .upload-row { grid-template-columns: 1fr; } }
 .upload-item { display: flex; flex-direction: column; gap: 6px; }
@@ -469,3 +438,29 @@ legend { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; colo
 ::-webkit-scrollbar-thumb:hover { background: #38414f; background-clip: content-box; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+/* ── config-missing banner (Build tab) ─────────────────── */
+.config-banner {
+  margin-bottom: 16px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--panel-2);
+}
+.config-banner.is-warn  { border-color: var(--amber-dim); background: rgba(242,180,71,.06); }
+.config-banner.is-error { border-color: var(--bad);       background: rgba(242,104,95,.07); }
+.config-banner .cb-title { font-weight: 600; font-size: 13.5px; margin-bottom: 6px; }
+.config-banner.is-warn  .cb-title { color: var(--amber); }
+.config-banner.is-error .cb-title { color: var(--bad); }
+.config-banner .cb-body { font-size: 12.5px; color: var(--ink-dim); line-height: 1.55; margin: 4px 0; }
+.config-banner .cb-path {
+  display: inline-block; margin: 6px 0; padding: 5px 10px;
+  font-family: var(--mono); font-size: 12px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-sm);
+  word-break: break-all;
+}
+.config-banner a { color: var(--steel); text-decoration: none; }
+.config-banner a:hover { text-decoration: underline; }
+
+/* keep the build-bar tidy now that it has copy/open/cancel buttons */
+.build-bar { gap: 12px; flex-wrap: wrap; }
+.build-bar #btn-cancel { margin-left: auto; }
+.build-bar .btn { padding: 6px 12px; font-size: 12.5px; }
