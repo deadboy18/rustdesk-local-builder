@@ -15,74 +15,75 @@
       <div class="brand-mark" aria-hidden="true"></div>
       <div>
         <div class="brand-name">RustDesk</div>
-        <div class="brand-sub">Local Builder</div>
+        <div class="brand-sub" data-i18n="brand.sub">Local Builder</div>
       </div>
     </div>
 
     <section class="rig-card" id="machine">
-      <h2 class="rig-title">This machine</h2>
-      <div class="spec" id="spec"><div class="spec-loading">reading hardware…</div></div>
+      <h2 class="rig-title" data-i18n="rig.machine">This machine</h2>
+      <div class="spec" id="spec"><div class="spec-loading" data-i18n="rig.reading">reading hardware…</div></div>
     </section>
 
     <section class="rig-card">
-      <h2 class="rig-title">Toolchain
+      <h2 class="rig-title"><span data-i18n="rig.toolchain">Toolchain</span>
         <span class="rig-title-actions">
-          <button class="mini" id="install-missing" title="Download missing toolchains into a local folder" hidden>install missing</button>
-          <button class="mini" id="recheck" title="Re-scan toolchains">re-scan</button>
+          <button class="mini" id="install-missing" data-i18n="rig.installMissing" data-i18n-title="rig.installMissing.title" title="Download missing toolchains into a local folder" hidden>install missing</button>
+          <button class="mini" id="recheck" data-i18n="rig.recheck" data-i18n-title="rig.recheck.title" title="Re-scan toolchains">re-scan</button>
         </span>
       </h2>
-      <ul class="prereqs" id="prereqs"><li class="muted">checking…</li></ul>
+      <ul class="prereqs" id="prereqs"><li class="muted" data-i18n="rig.checking">checking…</li></ul>
       <div class="local-foot" id="local-foot" hidden></div>
       <div class="install-log" id="install-log" hidden>
         <div class="install-log-head">
-          <span id="install-log-title">installing…</span>
-          <button class="mini" id="install-cancel">cancel</button>
+          <span id="install-log-title" data-i18n="rig.installing">installing…</span>
+          <button class="mini" id="install-cancel" data-i18n="rig.cancel">cancel</button>
         </div>
         <pre id="install-console"></pre>
       </div>
     </section>
 
     <footer class="rig-foot">
-      No GitHub. Everything runs on this device.
+      <span data-i18n="rig.foot">No GitHub. Everything runs on this device.</span>
+      <button class="mini" id="lang-toggle" title="中文 / English">中文</button>
     </footer>
   </aside>
 
   <!-- ── main ── -->
   <main class="main">
     <nav class="tabs" role="tablist">
-      <button class="tab is-active" data-tab="targets" role="tab">Targets</button>
-      <button class="tab" data-tab="config" role="tab">Config</button>
-      <button class="tab" data-tab="console" role="tab">Build</button>
+      <button class="tab is-active" data-tab="targets" role="tab" data-i18n="tab.targets">Targets</button>
+      <button class="tab" data-tab="config" role="tab" data-i18n="tab.config">Config</button>
+      <button class="tab" data-tab="console" role="tab" data-i18n="tab.console">Build</button>
     </nav>
 
     <!-- TARGETS -->
     <section class="panel is-active" id="tab-targets" role="tabpanel">
       <header class="panel-head">
-        <h1>What can this machine build?</h1>
-        <p class="lede" id="matrix-lede">Lit cells are ready to build right now. Outlined cells
+        <h1 data-i18n="targets.h1">What can this machine build?</h1>
+        <p class="lede" id="matrix-lede" data-i18n="targets.lede">Lit cells are ready to build right now. Outlined cells
           need a toolchain. Hatched cells need a different host OS.</p>
       </header>
 
       <div class="legend" aria-hidden="true">
-        <span class="lg lg-ready">◉ ready</span>
-        <span class="lg lg-need">⚠ needs a tool (installable)</span>
-        <span class="lg lg-blocked">▨ wrong host OS</span>
+        <span class="lg lg-ready" data-i18n="targets.legendReady">◉ ready</span>
+        <span class="lg lg-need" data-i18n="targets.legendNeed">⚠ needs a tool (installable)</span>
+        <span class="lg lg-blocked" data-i18n="targets.legendBlocked">▨ wrong host OS</span>
       </div>
 
-      <div class="board" id="board"><div class="muted">building capability map…</div></div>
+      <div class="board" id="board"><div class="muted" data-i18n="targets.loading">building capability map…</div></div>
 
       <div class="tray">
         <div class="tray-info">
-          <span id="sel-count">0</span> selected
+          <span id="sel-count">0</span> <span data-i18n="targets.selected">selected</span>
           <span class="tray-hint" id="sel-hint"></span>
         </div>
         <div class="tray-actions">
           <label class="dry">
             <input type="checkbox" id="dry-run">
-            <span>Dry run (print commands only)</span>
+            <span data-i18n="targets.dryRun">Dry run (print commands only)</span>
           </label>
-          <button class="btn ghost" id="btn-plan" disabled>Preview plan</button>
-          <button class="btn primary" id="btn-build" disabled>Start build</button>
+          <button class="btn ghost" id="btn-plan" disabled data-i18n="targets.previewPlan">Preview plan</button>
+          <button class="btn primary" id="btn-build" disabled data-i18n="targets.startBuild">Start build</button>
         </div>
       </div>
     </section>
@@ -90,62 +91,62 @@
     <!-- CONFIG -->
     <section class="panel" id="tab-config" role="tabpanel">
       <header class="panel-head">
-        <h1>Baked-in config</h1>
-        <p class="lede">These values are compiled into the client and written to
-          <code>custom_.txt</code>. The password and permissions live in the base64 payload.</p>
+        <h1 data-i18n="config.h1">Baked-in config</h1>
+        <p class="lede" data-i18n="config.lede">These values are compiled into the client and written to
+          custom_.txt. The password and permissions live in the base64 payload.</p>
       </header>
 
       <div class="config-grid">
         <div class="form">
           <fieldset>
-            <legend>Server</legend>
-            <label>Server address<input data-key="serverIP" placeholder="host.example.com"></label>
-            <label>Public key<input data-key="key" spellcheck="false"></label>
-            <label>API server<input data-key="apiServer" placeholder="https://host.example.com/"></label>
+            <legend data-i18n="config.server">Server</legend>
+            <label><span data-i18n="config.serverAddr">Server address</span><input data-key="serverIP" data-i18n-ph="ph.host" placeholder="host.example.com"></label>
+            <label><span data-i18n="config.pubkey">Public key</span><input data-key="key" spellcheck="false"></label>
+            <label><span data-i18n="config.apiServer">API server</span><input data-key="apiServer" data-i18n-ph="ph.api" placeholder="https://host.example.com/"></label>
           </fieldset>
 
           <fieldset>
-            <legend>Identity</legend>
-            <label>App name<input data-key="appname" placeholder="RustDesk = no rename"></label>
-            <label>File name<input data-key="exename" placeholder="RustDesk"></label>
-            <label>Company<input data-key="compname"></label>
-            <label>Android app id<input data-key="androidappid" placeholder="blank = default"></label>
+            <legend data-i18n="config.identity">Identity</legend>
+            <label><span data-i18n="config.appname">App name</span><input data-key="appname" data-i18n-ph="ph.appname" placeholder="RustDesk = no rename"></label>
+            <label><span data-i18n="config.exename">File name</span><input data-key="exename" data-i18n-ph="ph.exename" placeholder="RustDesk"></label>
+            <label><span data-i18n="config.compname">Company</span><input data-key="compname"></label>
+            <label><span data-i18n="config.androidid">Android app id</span><input data-key="androidappid" data-i18n-ph="ph.androidid" placeholder="blank = default"></label>
           </fieldset>
 
           <fieldset>
-            <legend>Access</legend>
-            <label>Permanent password<input data-key="permanentPassword" type="text" spellcheck="false"></label>
-            <label>Approval mode
+            <legend data-i18n="config.access">Access</legend>
+            <label><span data-i18n="config.password">Permanent password</span><input data-key="permanentPassword" type="text" spellcheck="false"></label>
+            <label><span data-i18n="config.approval">Approval mode</span>
               <select data-key="passApproveMode">
-                <option value="password-click">password-click (password AND on-screen accept)</option>
-                <option value="password">password only</option>
-                <option value="click">click only</option>
+                <option value="password-click" data-i18n="config.approval.pc">password-click (password AND on-screen accept)</option>
+                <option value="password" data-i18n="config.approval.p">password only</option>
+                <option value="click" data-i18n="config.approval.c">click only</option>
               </select>
             </label>
           </fieldset>
 
           <fieldset>
-            <legend>Permissions</legend>
+            <legend data-i18n="config.permissions">Permissions</legend>
             <div class="toggles" id="perm-toggles"></div>
           </fieldset>
 
           <fieldset>
-            <legend>Tweaks</legend>
+            <legend data-i18n="config.tweaks">Tweaks</legend>
             <div class="toggles" id="flag-toggles"></div>
           </fieldset>
 
           <div class="form-actions">
-            <button class="btn primary" id="btn-save-config">Save config</button>
+            <button class="btn primary" id="btn-save-config" data-i18n="config.save">Save config</button>
             <span class="save-note" id="save-note"></span>
           </div>
         </div>
 
         <aside class="preview">
-          <h3>custom_.txt preview</h3>
-          <p class="preview-note">Written next to the binary as <strong>base64</strong> — never raw JSON.
+          <h3 data-i18n="config.preview">custom_.txt preview</h3>
+          <p class="preview-note" data-i18n="config.previewNote">Written next to the binary as base64 — never raw JSON.
             Decoded for readability here.</p>
           <pre id="custom-preview" class="code">—</pre>
-          <h3>Compiled-in values</h3>
+          <h3 data-i18n="config.compiled">Compiled-in values</h3>
           <pre id="env-preview" class="code">—</pre>
         </aside>
       </div>
@@ -154,27 +155,28 @@
     <!-- CONSOLE -->
     <section class="panel" id="tab-console" role="tabpanel">
       <header class="panel-head">
-        <h1>Build</h1>
-        <p class="lede">Runs the same steps as the GitHub Actions workflow, on this machine.</p>
+        <h1 data-i18n="build.h1">Build</h1>
+        <p class="lede" data-i18n="build.lede">Runs the same steps as the GitHub Actions workflow, on this machine.</p>
       </header>
 
       <div class="build-bar">
-        <label class="ver">RustDesk version
+        <label class="ver"><span data-i18n="build.version">RustDesk version</span>
           <input id="version" value="1.4.9" size="10">
         </label>
-        <span class="build-status" id="build-status">idle</span>
+        <span class="build-status" id="build-status" data-i18n="build.idle">idle</span>
         <span class="build-timer" id="build-timer"></span>
-        <button class="btn" id="btn-copy-log" title="Copy the full build log">copy log</button>
-        <button class="btn danger" id="btn-cancel" disabled>Cancel</button>
+        <button class="btn" id="btn-copy-log" data-i18n="build.copyLog" data-i18n-title="build.copyLog.title" title="Copy the full build log">copy log</button>
+        <button class="btn danger" id="btn-cancel" disabled data-i18n="build.cancel">Cancel</button>
       </div>
 
-      <pre class="console" id="console"><span class="con-hint">Select targets, then Start build. Output streams here.</span></pre>
+      <pre class="console" id="console"><span class="con-hint" data-i18n="build.hint">Select targets, then Start build. Output streams here.</span></pre>
 
       <div class="artifacts" id="artifacts"></div>
     </section>
   </main>
 </div>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

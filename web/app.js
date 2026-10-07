@@ -21,8 +21,9 @@ $$(".tab").forEach(t => t.addEventListener("click", () => {
 
 /* ── machine spec ─────────────────────────────────────── */
 function renderSpec(h) {
+  state.host = h;
   const ram  = h.ram_gb != null ? `${h.ram_gb}<span class="u"> GB</span>` : "—";
-  const disk = h.free_disk_gb != null ? `${h.free_disk_gb}<span class="u"> GB free</span>` : "—";
+  const disk = h.free_disk_gb != null ? `${h.free_disk_gb}<span class="u">${t("spec.gbFree")}</span>` : "—";
   const rows = [
     ["host",  h.hostname || "—"],
     ["os",    `<span class="spec-os">${h.os} ${h.os_release || ""}</span>`],
@@ -34,7 +35,7 @@ function renderSpec(h) {
   ];
   if (h.distro) rows.splice(2, 0, ["distro", h.distro]);
   $("#spec").innerHTML = rows.map(([k, v]) =>
-    `<div class="spec-row"><span class="spec-k">${k}</span><span class="spec-v">${v}</span></div>`
+    `<div class="spec-row"><span class="spec-k">${t("spec." + k)}</span><span class="spec-v">${v}</span></div>`
   ).join("");
 }
 
@@ -44,6 +45,7 @@ state.installable = {};
 state.localTotal = "";
 
 function renderPrereqs(list) {
+  state.prereqs = list;
   $("#prereqs").innerHTML = list.map(p => {
     const ok = p.present;
     const inst = state.installable[p.id];
@@ -55,16 +57,16 @@ function renderPrereqs(list) {
     if (canInstall) {
       const sz = inst.id === "vs_buildtools" ? inst.size_disk : inst.size_download;
       const dl = sz ? ` <span class="pr-size">${esc(sz)}</span>` : "";
-      right = `<button class="pr-install" data-install="${inst.id}">install${dl}</button>`;
+      right = `<button class="pr-install" data-install="${inst.id}">${t("tool.install")}${dl}</button>`;
     } else if (ok) {
-      const ver = esc(shortVer(p.version)) || "ok";
+      const ver = esc(shortVer(p.version)) || t("tool.ok");
       // if it came from our local .toolchains folder, show its size + a remove ✕
       const rm = inst && inst.local
-        ? ` <span class="pr-local" title="installed locally">${esc(inst.local_size)}<button class="pr-remove" data-remove="${p.id}" title="remove local copy">✕</button></span>`
+        ? ` <span class="pr-local" title="${t("tool.localTitle")}">${esc(inst.local_size)}<button class="pr-remove" data-remove="${p.id}" title="${t("tool.removeTitle")}">✕</button></span>`
         : "";
       right = `<span class="pr-ver" title="${esc(p.version || "")}">${ver}</span>${rm}`;
     } else {
-      right = `<span class="pr-ver">not found</span>`;
+      right = `<span class="pr-ver">${t("tool.notFound")}</span>`;
     }
 
     return `<li class="pr ${ok ? "" : "missing"}">
@@ -81,7 +83,7 @@ function renderPrereqs(list) {
   const foot = $("#local-foot");
   if (state.localTotal && state.localTotal !== "0 B") {
     foot.hidden = false;
-    foot.innerHTML = `local toolchains: <strong>${esc(state.localTotal)}</strong> in <code>.toolchains/</code>`;
+    foot.innerHTML = `${t("tool.localFoot")}<strong>${esc(state.localTotal)}</strong> <code>.toolchains/</code>`;
   } else {
     foot.hidden = true;
   }
@@ -114,30 +116,27 @@ function installLine(text) {
 async function installTools(ids) {
   if (!ids.length) return;
   if (ids.includes("vs_buildtools")) {
-    if (!confirm("Install Build Tools for Visual Studio (C++)?\n\n" +
-      "This is Microsoft's official installer (~4–6 GB, several minutes) and " +
-      "will show a UAC prompt. It provides the MSVC linker (link.exe) that Rust " +
-      "needs plus MSBuild. Continue?")) return;
+    if (!confirm(t("tool.vsConfirm"))) return;
   }
   $("#install-log").hidden = false;
-  $("#install-log-title").textContent = `installing ${ids.join(", ")}…`;
+  $("#install-log-title").textContent = t("tool.installingX", { ids: ids.join(", ") });
   icon.textContent = "";
   const r = await api("/api/toolchains/install", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids }),
   });
-  if (!r.ok) { installLine("!! " + (r.message || r.error || "could not start")); return; }
+  if (!r.ok) { installLine("!! " + (r.message || r.error || t("build.couldNotStart"))); return; }
   $("#install-missing").disabled = true;
   const es = new EventSource("/api/toolchains/stream");
   es.onmessage = ev => { try { installLine(JSON.parse(ev.data).line); } catch {} };
   es.addEventListener("done", async () => {
     es.close();
-    $("#install-log-title").textContent = "install finished — re-scanning";
+    $("#install-log-title").textContent = t("tool.finished");
     $("#install-missing").disabled = false;
     await loadToolchains();
     await api("/api/prereqs").then(renderPrereqs);
     await loadMatrix();
-    $("#install-log-title").textContent = "done. tools wired into this session.";
+    $("#install-log-title").textContent = t("tool.done");
   });
   es.onerror = () => {};
 }
@@ -160,7 +159,7 @@ document.addEventListener("click", e => {
 async function removeTool(id) {
   const inst = state.installable[id];
   const size = inst?.local_size ? ` (${inst.local_size})` : "";
-  if (!confirm(`Remove the locally-installed ${id}${size}? You can reinstall it anytime.`)) return;
+  if (!confirm(t("tool.removeConfirm", { id, size }))) return;
   await api("/api/toolchains/remove", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id }),
@@ -176,25 +175,25 @@ function renderBoard() {
   const rows = [...state.targets].sort((a, b) =>
     (order[a.platform] - order[b.platform]) || a.label.localeCompare(b.label));
 
-  $("#board").innerHTML = rows.map((t, i) => {
+  $("#board").innerHTML = rows.map((tg, i) => {
     let kind = "blocked";
-    if (t.buildable && t.ready) kind = "ready";
-    else if (t.buildable && !t.ready) kind = "need";
+    if (tg.buildable && tg.ready) kind = "ready";
+    else if (tg.buildable && !tg.ready) kind = "need";
 
     let reason = "";
-    if (kind === "need") reason = `⚠ install first: ${t.missing_tools.join(", ")}`;
-    else if (kind === "blocked") reason = t.blocked_reason;
-    else if (t.blocked_reason) reason = t.blocked_reason;  // e.g. cross-compile note
+    if (kind === "need") reason = t("targets.installFirst", { tools: tg.missing_tools.join(", ") });
+    else if (kind === "blocked") reason = tg.blocked_reason;
+    else if (tg.blocked_reason) reason = tg.blocked_reason;  // e.g. cross-compile note
 
-    const sel = state.selected.has(t.id) ? "sel" : "";
-    return `<article class="cell ${kind} ${sel}" data-id="${t.id}" style="animation-delay:${i * 28}ms">
+    const sel = state.selected.has(tg.id) ? "sel" : "";
+    return `<article class="cell ${kind} ${sel}" data-id="${tg.id}" style="animation-delay:${i * 28}ms">
       <div class="cell-top">
-        <span class="cell-plat">${t.platform}</span>
+        <span class="cell-plat">${tg.platform}</span>
         <span class="led"></span>
       </div>
-      <div class="cell-label">${esc(t.label)}</div>
-      <div class="cell-arch">${t.arch} · .${t.ext}</div>
-      <div class="cell-note">${esc(t.note || "")}</div>
+      <div class="cell-label">${esc(tg.label)}</div>
+      <div class="cell-arch">${tg.arch} · .${tg.ext}</div>
+      <div class="cell-note">${esc(tg.note || "")}</div>
       ${reason ? `<div class="cell-reason">${esc(reason)}</div>` : ""}
       <div class="cell-check"></div>
     </article>`;
@@ -221,25 +220,25 @@ function updateTray() {
 
 /* ── config form ──────────────────────────────────────── */
 const PERMS = [
-  ["enableKeyboard", "Keyboard"], ["enableClipboard", "Clipboard"],
-  ["enableFileTransfer", "File transfer"], ["enableAudio", "Audio"],
-  ["enableTCP", "TCP tunnel"], ["enableRemoteRestart", "Remote restart"],
-  ["enableRecording", "Recording"], ["enableBlockingInput", "Block input"],
-  ["enableRemoteModi", "Remote config edit"], ["enablePrinter", "Printer"],
-  ["enableCamera", "Camera"], ["enableTerminal", "Terminal"],
+  ["enableKeyboard", "perm.enableKeyboard"], ["enableClipboard", "perm.enableClipboard"],
+  ["enableFileTransfer", "perm.enableFileTransfer"], ["enableAudio", "perm.enableAudio"],
+  ["enableTCP", "perm.enableTCP"], ["enableRemoteRestart", "perm.enableRemoteRestart"],
+  ["enableRecording", "perm.enableRecording"], ["enableBlockingInput", "perm.enableBlockingInput"],
+  ["enableRemoteModi", "perm.enableRemoteModi"], ["enablePrinter", "perm.enablePrinter"],
+  ["enableCamera", "perm.enableCamera"], ["enableTerminal", "perm.enableTerminal"],
 ];
 const FLAGS = [
-  ["delayFix", "Fix connection delay"], ["hidecm", "Hide connection window"],
-  ["xOffline", "Show ‘X’ when offline"], ["removeNewVersionNotif", "Hide update notice"],
-  ["removeWallpaper", "Allow wallpaper removal"], ["denyLan", "Disable LAN discovery"],
-  ["enableDirectIP", "Direct IP access"], ["autoClose", "Auto-disconnect idle"],
+  ["delayFix", "flag.delayFix"], ["hidecm", "flag.hidecm"],
+  ["xOffline", "flag.xOffline"], ["removeNewVersionNotif", "flag.removeNewVersionNotif"],
+  ["removeWallpaper", "flag.removeWallpaper"], ["denyLan", "flag.denyLan"],
+  ["enableDirectIP", "flag.enableDirectIP"], ["autoClose", "flag.autoClose"],
 ];
 
 function buildToggles() {
   $("#perm-toggles").innerHTML = PERMS.map(([k, l]) =>
-    `<label class="tg"><input type="checkbox" data-key="${k}"><span>${l}</span></label>`).join("");
+    `<label class="tg"><input type="checkbox" data-key="${k}"><span>${t(l)}</span></label>`).join("");
   $("#flag-toggles").innerHTML = FLAGS.map(([k, l]) =>
-    `<label class="tg"><input type="checkbox" data-key="${k}"><span>${l}</span></label>`).join("");
+    `<label class="tg"><input type="checkbox" data-key="${k}"><span>${t(l)}</span></label>`).join("");
 }
 
 function fillConfig(cfg) {
@@ -289,7 +288,7 @@ $("#btn-save-config").addEventListener("click", async () => {
     body: JSON.stringify(cfg),
   });
   const note = $("#save-note");
-  note.textContent = r.ok ? "saved ✓" : ("error: " + (r.error || "?"));
+  note.textContent = r.ok ? t("config.saved") : (t("config.saveError") + (r.error || "?"));
   note.style.color = r.ok ? "" : "var(--bad)";
   state.config = cfg;
   setTimeout(() => (note.textContent = ""), 2500);
@@ -350,21 +349,22 @@ async function copyBuildLog(btn) {
   const text = logBuffer.join("\n");
   try {
     await navigator.clipboard.writeText(text);
-    if (btn) { const o = btn.textContent; btn.textContent = "copied ✓"; setTimeout(() => btn.textContent = o, 1400); }
+    if (btn) { const o = btn.textContent; btn.textContent = t("build.copied"); setTimeout(() => btn.textContent = o, 1400); }
   } catch {
     // clipboard API can be blocked; fall back to a temporary textarea
     const ta = document.createElement("textarea");
     ta.value = text; document.body.appendChild(ta); ta.select();
     try { document.execCommand("copy"); } catch {}
     ta.remove();
-    if (btn) { const o = btn.textContent; btn.textContent = "copied ✓"; setTimeout(() => btn.textContent = o, 1400); }
+    if (btn) { const o = btn.textContent; btn.textContent = t("build.copied"); setTimeout(() => btn.textContent = o, 1400); }
   }
 }
 
 let timerHandle = null, startedAt = 0;
 function setStatus(s) {
   const el = $("#build-status");
-  el.textContent = s;
+  el.dataset.status = s;
+  el.textContent = t("build." + s);
   el.className = "build-status " + (
     s === "running" ? "running" : s === "done" ? "done" : s === "failed" ? "failed" : "");
 }
@@ -431,9 +431,9 @@ async function startBuild(dry) {
       body: JSON.stringify(payload),
     });
     if (!pf.ok) {
-      conLine("! preflight found missing toolchains:");
+      conLine(t("build.preflight"));
       pf.problems.forEach(p => conLine("    - " + p));
-      conLine("  (fix these in the Toolchain panel, or use Dry run to preview)\n");
+      conLine(t("build.preflightFix") + "\n");
     }
   }
 
@@ -458,16 +458,22 @@ function esc(s) {
 }
 
 /* ── boot ─────────────────────────────────────────────── */
+function renderMatrixLede() {
+  const m = state.matrix;
+  if (!m) return;
+  const ready = m.targets.filter(x => x.ready).length;
+  const buildable = m.targets.filter(x => x.buildable).length;
+  $("#matrix-lede").textContent = t("targets.ledeDynamic",
+    { os: m.host.os, n: buildable, ready });
+}
+
 async function loadMatrix() {
   const m = await api("/api/matrix");
+  state.matrix = m;
   renderSpec(m.host);
   state.targets = m.targets;
   renderBoard();
-  const ready = m.targets.filter(t => t.ready).length;
-  const buildable = m.targets.filter(t => t.buildable).length;
-  $("#matrix-lede").textContent =
-    `This ${m.host.os} machine can build ${buildable} target${buildable === 1 ? "" : "s"}; ` +
-    `${ready} ${ready === 1 ? "is" : "are"} ready to go right now.`;
+  renderMatrixLede();
 }
 
 async function boot() {
@@ -480,10 +486,21 @@ async function boot() {
   ]);
 }
 $("#recheck").addEventListener("click", async () => {
-  $("#prereqs").innerHTML = '<li class="muted">re-scanning…</li>';
+  $("#prereqs").innerHTML = `<li class="muted">${t("rescanning")}</li>`;
   await loadToolchains();
   await api("/api/prereqs").then(renderPrereqs);
   await loadMatrix();
 });
+
+/* ── i18n: re-render dynamic parts when the language flips ─ */
+window.__i18nRerender = () => {
+  if (state.host) renderSpec(state.host);
+  if (state.prereqs) renderPrereqs(state.prereqs);
+  if (state.targets.length) { buildToggles(); renderBoard(); }
+  renderMatrixLede();
+  const st = $("#build-status");
+  if (st.dataset.status) setStatus(st.dataset.status);
+  if (state.config) fillConfig(state.config);
+};
 
 boot();

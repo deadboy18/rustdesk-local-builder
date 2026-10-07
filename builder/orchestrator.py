@@ -171,15 +171,39 @@ class Build:
                 if os.path.exists(self.src_dir):
                     _force_rmtree(self.src_dir)
         os.makedirs(self.workspace, exist_ok=True)
-        self.run(["git", "clone", "--depth", "1", "--branch", self.version,
-                  "--recurse-submodules", RUSTDESK_REPO, self.src_dir])
+        # clone + 子模块是网络最脆的一步：失败清场重试（部分克隆会污染目标目录）
+        last_err = None
+        for attempt in range(1, 6):
+            try:
+                self.run(["git", "clone", "--depth", "1", "--branch", self.version,
+                          "--recurse-submodules", RUSTDESK_REPO, self.src_dir])
+                last_err = None
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                self.log(f"  ! clone attempt {attempt} failed: {e}")
+                if not self.dry_run:
+                    shutil.rmtree(self.src_dir, ignore_errors=True)
+                    if os.path.exists(self.src_dir):
+                        _force_rmtree(self.src_dir)
+                time.sleep(10)
+        if last_err:
+            raise last_err
 
     def generate_bridge(self):
         self.log("\n=== 2. Generate flutter_rust_bridge ===")
         # Mirrors the generate-bridge job. cargo installs the codegen binary into
         # ~/.cargo/bin, which run() puts on PATH so it resolves on Windows too.
+        # bridge.yml 还装 cargo-expand（frb 解析宏必需）+ flutter pub get（ffigen 需要
+        # .dart_tool/package_config.json）。注意 bridge.yml 里 extended_text 13.0.0 的
+        # pin 只适用于它那套 Flutter 3.22.3；本机单 Flutter 3.24.5 必须保留 pubspec
+        # 原版 14.0.0，否则 flutter build 报一堆 API 不匹配。
+        self.run(["cargo", "install", "cargo-expand", "--version", "1.0.95", "--locked"],
+                 check=False)
         self.run(["cargo", "install", "flutter_rust_bridge_codegen",
                   "--version", "1.80.1", "--features", "uuid", "--locked"],
+                 check=False)
+        self.run(["flutter", "pub", "get"], cwd=os.path.join(self.src_dir, "flutter"),
                  check=False)
         codegen = shutil.which("flutter_rust_bridge_codegen", path=self._effective_path())
         if not codegen and not self.dry_run:
@@ -191,6 +215,20 @@ class Build:
                   "--dart-output", "./flutter/lib/generated_bridge.dart",
                   "--c-output", "./flutter/macos/Runner/bridge_generated.h"],
                  cwd=self.src_dir, check=False)
+        # frb 生成时会把 DUMMY_WIRE_CODE_FOR_BINDGEN 暂时追加到 rust 输出文件喂
+        # bindgen，正常结束才还原；codegen 中途 panic 就会残留，编译报
+        # E0412（Dart_Handle not found）。这里兜底剪掉残留段。
+        gen_rs = os.path.join(self.src_dir, "src", "bridge_generated.rs")
+        marker = "// ----------- DUMMY CODE FOR BINDGEN ----------"
+        try:
+            with open(gen_rs, encoding="utf-8") as f:
+                txt = f.read()
+            if marker in txt:
+                with open(gen_rs, "w", encoding="utf-8") as f:
+                    f.write(txt[:txt.index(marker)].rstrip() + "\n")
+                self.log("  · removed leftover dummy bindgen block in bridge_generated.rs")
+        except OSError:
+            pass
 
     def customize_for(self, platform):
         if self.dry_run:
@@ -240,6 +278,9 @@ class Build:
                      "Set it to your vcpkg checkout so ffmpeg/hwcodec resolve.")
             return
         self.log(f"  vcpkg deps ({triplet}) from {root}")
+        # CI 里 generator-windows.yml 有 VCPKG_DEFAULT_HOST_TRIPLET=<triplet>（缺了它
+        # ffmpeg 等 host 依赖会建进 x64-windows 树，hwcodec 只认 x64-windows-static）
+        os.environ["VCPKG_DEFAULT_HOST_TRIPLET"] = triplet
         self.run(["git", "-C", root, "fetch", "--depth", "1", "origin", self.VCPKG_COMMIT],
                  check=False)
         self.run(["git", "-C", root, "checkout", self.VCPKG_COMMIT], check=False)

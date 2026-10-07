@@ -66,7 +66,14 @@ def _arch():
 # ---------------------------------------------------------------------------
 # tool registry: url per (os, arch), archive kind, and how to wire env after
 # ---------------------------------------------------------------------------
-FLUTTER_BASE = "https://storage.googleapis.com/flutter_infra_release/releases/stable"
+# Flutter SDK download base. Override with RDLB_FLUTTER_BASE to use a mirror
+# (e.g. https://storage.flutter-io.cn/flutter_infra_release/releases/stable,
+# which is path-compatible with the Google storage URL) when the default host
+# is slow or unreachable from your network.
+FLUTTER_BASE = os.environ.get(
+    "RDLB_FLUTTER_BASE",
+    "https://storage.googleapis.com/flutter_infra_release/releases/stable",
+)
 LLVM_REL = "https://github.com/llvm/llvm-project/releases/download/llvmorg-15.0.6"
 NDK_BASE = "https://dl.google.com/android/repository"
 ADOPTIUM = "https://api.adoptium.net/v3/binary/latest/17/ga"

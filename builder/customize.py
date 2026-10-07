@@ -17,6 +17,7 @@ platform, the CUSTOM_* env dict, and a `log` callback for streaming progress.
 import os
 import re
 import subprocess
+import sys
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +113,8 @@ def _apply_allow_custom(src, patches_dir, log):
     common = os.path.join(src, "src", "common.rs")
     if os.path.exists(script) and os.path.exists(common):
         try:
-            subprocess.run(["python3", script], cwd=src, check=True,
+            # 用当前解释器而非 "python3"——Windows 上 python3 常是坏的商店 stub
+            subprocess.run([sys.executable, script], cwd=src, check=True,
                            capture_output=True, text=True)
             log("    · allowCustom.py applied")
         except subprocess.CalledProcessError as e:
